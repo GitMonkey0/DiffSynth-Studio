@@ -253,10 +253,6 @@ def batch_process(input_dir: str, output_dir: str, model_path: str,
         summary["metadata_jsonl"] = str(Path(metadata_jsonl).resolve())
         summary["metadata_items_count"] = len(metadata_items)
 
-    summary_path = output_dir / "processing_summary.json"
-    with open(summary_path, "w", encoding="utf-8") as f:
-        json.dump(summary, f, ensure_ascii=False, indent=2)
-
     print(f"\n[DONE] summary -> {summary_path}")
 
 
