@@ -1,6 +1,7 @@
 import torch, torchvision, imageio, os
 import imageio.v3 as iio
 from PIL import Image
+import numpy as np
 
 
 class DataProcessingPipeline:
@@ -218,3 +219,19 @@ class LoadAudio(DataProcessingOperator):
         import librosa
         input_audio, sample_rate = librosa.load(data, sr=self.sr)
         return input_audio
+
+
+class LoadHLNPZ(DataProcessingOperator):
+    def __init__(self, key: str | None = None):
+        self.key = key
+
+    def __call__(self, path: str):
+        data = np.load(path)
+        if self.key is not None:
+            hl = data[self.key]
+        else:
+            if "hl" in data:
+                hl = data["hl"]
+            else:
+                hl = data[list(data.keys())[0]]
+        return hl

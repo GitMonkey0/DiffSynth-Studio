@@ -1,6 +1,6 @@
 import torch, os, argparse, accelerate, warnings
 from diffsynth.core import UnifiedDataset
-from diffsynth.core.data.operators import LoadVideo, LoadAudio, ImageCropAndResize, ToAbsolutePath
+from diffsynth.core.data.operators import LoadVideo, LoadAudio, ImageCropAndResize, ToAbsolutePath, LoadHLNPZ
 from diffsynth.pipelines.wan_video import WanVideoPipeline, ModelConfig
 from diffsynth.diffusion import *
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
@@ -45,6 +45,11 @@ class WanTrainingModule(DiffusionTrainingModule):
             task=task,
         )
         
+        # Unfreeze HL embedder if present (it's new and needs to be trained)
+        if hasattr(self.pipe, "hl_embedder") and self.pipe.hl_embedder is not None:
+            self.pipe.hl_embedder.requires_grad_(True)
+            self.pipe.hl_embedder.train()
+        
         # Store other configs
         self.use_gradient_checkpointing = use_gradient_checkpointing
         self.use_gradient_checkpointing_offload = use_gradient_checkpointing_offload
@@ -62,6 +67,7 @@ class WanTrainingModule(DiffusionTrainingModule):
         self.max_timestep_boundary = max_timestep_boundary
         self.min_timestep_boundary = min_timestep_boundary
         
+
     def parse_extra_inputs(self, data, extra_inputs, inputs_shared):
         for extra_input in extra_inputs:
             if extra_input == "input_image":
@@ -70,6 +76,21 @@ class WanTrainingModule(DiffusionTrainingModule):
                 inputs_shared["end_image"] = data["video"][-1]
             elif extra_input == "reference_image" or extra_input == "vace_reference_image":
                 inputs_shared[extra_input] = data[extra_input][0]
+            elif extra_input == "hl_npz":
+                # hl_npz: np (T_hl, 40)
+                hl = data["hl_npz"]
+                num_frames = len(data["video"])
+                # The latent timeline length
+                T_lat = (num_frames - 1) // 4 + 1
+                
+                # Resample
+                t_src = np.linspace(0, 1, hl.shape[0])
+                t_tgt = np.linspace(0, 1, T_lat)
+                idx = np.searchsorted(t_src, t_tgt, side="left")
+                idx = np.clip(idx, 0, hl.shape[0] - 1)
+                hl_resampled = hl[idx]
+                
+                inputs_shared["hl_codes"] = torch.from_numpy(hl_resampled).long()
             else:
                 inputs_shared[extra_input] = data[extra_input]
         return inputs_shared
@@ -146,6 +167,7 @@ if __name__ == "__main__":
         special_operator_map={
             "animate_face_video": ToAbsolutePath(args.dataset_base_path) >> LoadVideo(args.num_frames, 4, 1, frame_processor=ImageCropAndResize(512, 512, None, 16, 16)),
             "input_audio": ToAbsolutePath(args.dataset_base_path) >> LoadAudio(sr=16000),
+            "hl_npz": ToAbsolutePath(args.dataset_base_path) >> LoadHLNPZ(),
         }
     )
     model = WanTrainingModule(
