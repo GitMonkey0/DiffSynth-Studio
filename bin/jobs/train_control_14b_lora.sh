@@ -3,7 +3,7 @@ export http_proxy=http://sys-proxy-rd-relay.byted.org:8118 https_proxy=http://sy
 accelerate launch --config_file examples/wanvideo/model_training/full/accelerate_config_14B.yaml \
   examples/wanvideo/model_training/train.py \
   --dataset_base_path "" \
-  --dataset_metadata_path /mnt/bn/aicoding-lq/luhaotian/projects/DiffSynth-Studio/extra/data/metadata/fun_control/baseline/train_metadata.jsonl \
+  --dataset_metadata_path /mnt/bn/aicoding-lq/luhaotian/projects/DiffSynth-Studio/bin/data/processed/metadata/train_metadata.jsonl \
   --data_file_keys "video,control_video,reference_image" \
   --height 480 \
   --width 832 \
