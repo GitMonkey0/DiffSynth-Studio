@@ -50,6 +50,7 @@ class WanVideoPipeline(BasePipeline):
         self.vap: MotWanModel = None
         self.animate_adapter: WanAnimateAdapter = None
         self.audio_encoder: WanS2VAudioEncoder = None
+        self.hl_embedder = None
         self.in_iteration_models = ("dit", "motion_controller", "vace", "animate_adapter", "vap")
         self.in_iteration_models_2 = ("dit2", "motion_controller", "vace2", "animate_adapter", "vap")
         self.units = [
@@ -63,6 +64,7 @@ class WanVideoPipeline(BasePipeline):
             WanVideoUnit_ImageEmbedderFused(),
             WanVideoUnit_FunControl(),
             WanVideoUnit_FunReference(),
+            WanVideoUnit_HL(),
             WanVideoUnit_FunCameraControl(),
             WanVideoUnit_SpeedControl(),
             WanVideoUnit_VACE(),
@@ -153,6 +155,10 @@ class WanVideoPipeline(BasePipeline):
         pipe.audio_encoder = model_pool.fetch_model("wans2v_audio_encoder")
         pipe.animate_adapter = model_pool.fetch_model("wan_video_animate_adapter")
 
+        if pipe.dit is not None:
+            pipe.hl_embedder = torch.nn.Embedding(27, pipe.dit.dim).to(device=device, dtype=torch_dtype)
+            torch.nn.init.normal_(pipe.hl_embedder.weight, mean=0.0, std=1e-3)
+
         # Size division factor
         if pipe.vae is not None:
             pipe.height_division_factor = pipe.vae.upsampling_factor * 2
@@ -197,6 +203,8 @@ class WanVideoPipeline(BasePipeline):
         # ControlNet
         control_video: Optional[list[Image.Image]] = None,
         reference_image: Optional[Image.Image] = None,
+        hl_codes: Optional[torch.Tensor] = None,
+        hl_scale: Optional[float] = 0.1,
         # Camera control
         camera_control_direction: Optional[Literal["Left", "Right", "Up", "Down", "LeftUp", "LeftDown", "RightUp", "RightDown"]] = None,
         camera_control_speed: Optional[float] = 1/54,
@@ -267,6 +275,7 @@ class WanVideoPipeline(BasePipeline):
             "end_image": end_image,
             "input_video": input_video, "denoising_strength": denoising_strength,
             "control_video": control_video, "reference_image": reference_image,
+            "hl_codes": hl_codes, "hl_scale": hl_scale,
             "camera_control_direction": camera_control_direction, "camera_control_speed": camera_control_speed, "camera_control_origin": camera_control_origin,
             "vace_video": vace_video, "vace_video_mask": vace_video_mask, "vace_reference_image": vace_reference_image, "vace_scale": vace_scale,
             "seed": seed, "rand_device": rand_device,
@@ -549,6 +558,32 @@ class WanVideoUnit_FunReference(PipelineUnit):
         clip_feature = pipe.preprocess_image(reference_image)
         clip_feature = pipe.image_encoder.encode_image([clip_feature])
         return {"reference_latents": reference_latents, "clip_feature": clip_feature}
+
+
+class WanVideoUnit_HL(PipelineUnit):
+    def __init__(self):
+        super().__init__(
+            input_params=("hl_codes", "hl_scale"),
+            output_params=("hl_context",),
+            onload_model_names=("hl_embedder",)
+        )
+
+    def process(self, pipe: WanVideoPipeline, hl_codes, hl_scale):
+        if hl_codes is None or pipe.hl_embedder is None:
+            return {}
+        if not isinstance(hl_codes, torch.Tensor):
+            hl_codes = torch.as_tensor(hl_codes, dtype=torch.long)
+        hl_codes = hl_codes.to(device=pipe.device)
+        if hl_codes.ndim == 2:
+            hl_codes = hl_codes.unsqueeze(0)
+        hl_codes = hl_codes.view(hl_codes.shape[0], -1).long()
+        pipe.load_models_to_device(self.onload_model_names)
+        if hl_scale is None:
+            hl_scale = 1.0
+        hl_context = pipe.hl_embedder(hl_codes)
+        hl_context = hl_context * float(hl_scale)
+        hl_context = hl_context.to(dtype=pipe.torch_dtype, device=pipe.device)
+        return {"hl_context": hl_context}
 
 
 
@@ -1133,6 +1168,7 @@ def model_fn_wan_video(
     latents: torch.Tensor = None,
     timestep: torch.Tensor = None,
     context: torch.Tensor = None,
+    hl_context: Optional[torch.Tensor] = None,
     clip_feature: Optional[torch.Tensor] = None,
     y: Optional[torch.Tensor] = None,
     reference_latents = None,
@@ -1168,6 +1204,7 @@ def model_fn_wan_video(
             latents=latents,
             timestep=timestep,
             context=context,
+            hl_context=hl_context,
             clip_feature=clip_feature,
             y=y,
             reference_latents=reference_latents,
@@ -1239,6 +1276,10 @@ def model_fn_wan_video(
     if motion_bucket_id is not None and motion_controller is not None:
         t_mod = t_mod + motion_controller(motion_bucket_id).unflatten(1, (6, dit.dim))
     context = dit.text_embedding(context)
+    if hl_context is not None:
+        if hl_context.shape[0] != context.shape[0]:
+            hl_context = hl_context.repeat(context.shape[0], 1, 1)
+        context = torch.cat([hl_context, context], dim=1)
 
     x = latents
     # Merged cfg

@@ -1,6 +1,7 @@
 import torch, os, argparse, accelerate, warnings
+import numpy as np
 from diffsynth.core import UnifiedDataset
-from diffsynth.core.data.operators import LoadVideo, LoadAudio, ImageCropAndResize, ToAbsolutePath
+from diffsynth.core.data.operators import LoadVideo, LoadAudio, ImageCropAndResize, ToAbsolutePath, LoadHLNPZ
 from diffsynth.pipelines.wan_video import WanVideoPipeline, ModelConfig
 from diffsynth.diffusion import *
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
@@ -23,6 +24,7 @@ class WanTrainingModule(DiffusionTrainingModule):
         task="sft",
         max_timestep_boundary=1.0,
         min_timestep_boundary=0.0,
+        hl_scale=0.1,
     ):
         super().__init__()
         # Warning
@@ -51,6 +53,7 @@ class WanTrainingModule(DiffusionTrainingModule):
         self.extra_inputs = extra_inputs.split(",") if extra_inputs is not None else []
         self.fp8_models = fp8_models
         self.task = task
+        self.hl_scale = hl_scale
         self.task_to_loss = {
             "sft:data_process": lambda pipe, *args: args,
             "direct_distill:data_process": lambda pipe, *args: args,
@@ -70,9 +73,26 @@ class WanTrainingModule(DiffusionTrainingModule):
                 inputs_shared["end_image"] = data["video"][-1]
             elif extra_input == "reference_image" or extra_input == "vace_reference_image":
                 inputs_shared[extra_input] = data[extra_input][0]
+            elif extra_input == "hl_npz":
+                hl = data.get("hl_npz", None)
+                if hl is not None:
+                    num_frames = len(data["video"])
+                    inputs_shared["hl_codes"] = self.resample_hl_codes(hl, num_frames)
             else:
                 inputs_shared[extra_input] = data[extra_input]
         return inputs_shared
+
+    def resample_hl_codes(self, hl, num_frames):
+        hl = np.asarray(hl)
+        if hl.ndim == 1:
+            hl = hl[:, None]
+        t_src = np.linspace(0, 1, hl.shape[0])
+        t_lat = (num_frames - 1) // 4 + 1
+        t_tgt = np.linspace(0, 1, t_lat)
+        idx = np.searchsorted(t_src, t_tgt, side="left")
+        idx = np.clip(idx, 0, hl.shape[0] - 1)
+        hl_resampled = hl[idx]
+        return torch.from_numpy(hl_resampled).long()
     
     def get_pipeline_inputs(self, data):
         inputs_posi = {"prompt": data["prompt"]}
@@ -95,6 +115,7 @@ class WanTrainingModule(DiffusionTrainingModule):
             "vace_scale": 1,
             "max_timestep_boundary": self.max_timestep_boundary,
             "min_timestep_boundary": self.min_timestep_boundary,
+            "hl_scale": self.hl_scale,
         }
         inputs_shared = self.parse_extra_inputs(data, self.extra_inputs, inputs_shared)
         return inputs_shared, inputs_posi, inputs_nega
@@ -117,6 +138,7 @@ def wan_parser():
     parser.add_argument("--max_timestep_boundary", type=float, default=1.0, help="Max timestep boundary (for mixed models, e.g., Wan-AI/Wan2.2-I2V-A14B).")
     parser.add_argument("--min_timestep_boundary", type=float, default=0.0, help="Min timestep boundary (for mixed models, e.g., Wan-AI/Wan2.2-I2V-A14B).")
     parser.add_argument("--initialize_model_on_cpu", default=False, action="store_true", help="Whether to initialize models on CPU.")
+    parser.add_argument("--hl_scale", type=float, default=0.1, help="Scale factor for HL context to reduce early impact.")
     return parser
 
 
@@ -146,6 +168,7 @@ if __name__ == "__main__":
         special_operator_map={
             "animate_face_video": ToAbsolutePath(args.dataset_base_path) >> LoadVideo(args.num_frames, 4, 1, frame_processor=ImageCropAndResize(512, 512, None, 16, 16)),
             "input_audio": ToAbsolutePath(args.dataset_base_path) >> LoadAudio(sr=16000),
+            "hl_npz": ToAbsolutePath(args.dataset_base_path) >> LoadHLNPZ(),
         }
     )
     model = WanTrainingModule(
@@ -169,6 +192,7 @@ if __name__ == "__main__":
         device="cpu" if args.initialize_model_on_cpu else accelerator.device,
         max_timestep_boundary=args.max_timestep_boundary,
         min_timestep_boundary=args.min_timestep_boundary,
+        hl_scale=args.hl_scale,
     )
     model_logger = ModelLogger(
         args.output_path,
