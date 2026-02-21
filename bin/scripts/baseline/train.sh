@@ -3,7 +3,7 @@ export http_proxy=http://sys-proxy-rd-relay.byted.org:8118 https_proxy=http://sy
 accelerate launch --config_file examples/wanvideo/model_training/full/accelerate_config_14B.yaml \
   examples/wanvideo/model_training/train.py \
   --dataset_base_path "" \
-  --dataset_metadata_path /mnt/bn/aicoding-lq/luhaotian/projects/DiffSynth-Studio/bin/data/processed/metadata/train_metadata.jsonl \
+  --dataset_metadata_path /mnt/bn/aicoding-lq/luhaotian/projects/DiffSynth-Studio/bin/data/metadata/train_metadata.jsonl \
   --data_file_keys "video,control_video,reference_image" \
   --height 480 \
   --width 832 \
@@ -17,7 +17,7 @@ accelerate launch --config_file examples/wanvideo/model_training/full/accelerate
   --learning_rate 1e-4 \
   --num_epochs 1 \
   --remove_prefix_in_ckpt "pipe.dit." \
-  --output_path "./models/train/Wan2.1-Fun-V1.1-14B-Control_lora" \
+  --output_path "/mnt/bn/aicoding-lq/luhaotian/projects/DiffSynth-Studio/bin/experiments/baseline/ckpt" \
   --lora_base_model "dit" \
   --lora_target_modules "q,k,v,o,ffn.0,ffn.2" \
   --lora_rank 32 \
