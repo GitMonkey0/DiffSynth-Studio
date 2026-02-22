@@ -2,4 +2,5 @@ export http_proxy=http://sys-proxy-rd-relay.byted.org:8118 https_proxy=http://sy
 
 torchrun --nproc_per_node=8 /mnt/bn/aicoding-lq/luhaotian/projects/DiffSynth-Studio/bin/scripts/hl/infer.py \
   --jsonl /mnt/bn/aicoding-lq/luhaotian/projects/DiffSynth-Studio/bin/data/metadata_hl/test_metadata.jsonl \
-  --out_dir /mnt/bn/aicoding-lq/luhaotian/projects/DiffSynth-Studio/bin/experiments/hl/runs/videos
+  --out_dir /mnt/bn/aicoding-lq/luhaotian/projects/DiffSynth-Studio/bin/experiments/hl/runs/videos \
+  --lora_path /mnt/bn/aicoding-lq/luhaotian/projects/DiffSynth-Studio/bin/experiments/hl/ckpt/epoch-0.safetensors

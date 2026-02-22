@@ -238,24 +238,6 @@ def batch_process(input_dir: str, output_dir: str, model_path: str,
                 results.append(err)
                 print(f"[FAIL] {v.name} -> {e}")
 
-    summary = {
-        "input_dir": str(Path(input_dir).resolve()),
-        "output_dir": str(output_dir.resolve()),
-        "model_path": str(Path(model_path).resolve()),
-        "total_videos": len(videos),
-        "successful": sum(1 for r in results if r.get("success")),
-        "failed": sum(1 for r in results if not r.get("success")),
-        "results": results,
-    }
-
-    # 若使用了 metadata，可以顺便把 metadata 信息也写入 summary
-    if metadata_items is not None:
-        summary["metadata_jsonl"] = str(Path(metadata_jsonl).resolve())
-        summary["metadata_items_count"] = len(metadata_items)
-
-    print(f"\n[DONE] summary -> {summary_path}")
-
-
 def str2bool(x: str) -> bool:
     return str(x).lower() in {"1", "true", "yes", "y"}
 
